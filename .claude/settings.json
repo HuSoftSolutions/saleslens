@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof -i :3000 -sTCP:LISTEN -n -P)",
+      "Bash(ps -p 71047 -o pid,command)"
+    ]
+  }
+}

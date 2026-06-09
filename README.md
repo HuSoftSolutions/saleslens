@@ -1,36 +1,142 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Clover Insights
+
+A chat-first web app that lets business owners connect their Clover POS account and ask natural-language questions about their business data.
+
+## Stack
+
+- **Next.js** (App Router, TypeScript)
+- **Tailwind CSS** + shadcn/ui
+- **Firebase Auth** (email/password)
+- **Firestore** (data storage)
+- **Firebase Admin SDK** (server-side auth verification)
+- **Clover OAuth** (POS integration)
+- **OpenAI API** (LLM with tool/function calling)
 
 ## Getting Started
 
-First, run the development server:
+### 1. Prerequisites
+
+- Node.js 18+
+- A Firebase project with Firestore and Authentication (email/password) enabled
+- A Clover developer account with a sandbox app
+- An OpenAI API key
+
+### 2. Clone and install
+
+```bash
+git clone <repo-url>
+cd clover-insights
+npm install
+```
+
+### 3. Configure environment
+
+```bash
+cp .env.local.example .env.local
+```
+
+Fill in all values in `.env.local`:
+
+- **Firebase Client**: Get from Firebase Console > Project Settings > Your Apps > Web App
+- **Firebase Admin**: Set `FIREBASE_PROJECT_ID`. For local dev, optionally set `FIREBASE_SERVICE_ACCOUNT_KEY` with the JSON contents of a service account key file (escaped as a single-line JSON string)
+- **Clover**: Create an app at [Clover Developer Dashboard](https://sandbox.dev.clover.com/developer-home/create-account). Set the OAuth redirect URI to `http://localhost:3000/api/clover/oauth/callback`
+- **OpenAI**: Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys)
+
+### 4. Run development server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 5. First use
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Sign up with email/password on the login page
+2. Navigate to Settings and connect your Clover account
+3. Open Chat and start asking questions
 
-## Learn More
+## Available Chat Queries
 
-To learn more about Next.js, take a look at the following resources:
+The AI assistant can answer questions using these tools:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Sales Summary**: "What were my total sales last week?"
+- **Period Comparison**: "Compare this month's sales to last month"
+- **Top Selling Items**: "What are my top 5 selling items this month?"
+- **Refund Summary**: "How many refunds did I have in May?"
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The assistant will always cite the data source and date range, and will clearly state when something cannot be answered from Clover data alone.
 
-## Deploy on Vercel
+## Architecture
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+Browser                          Server
+  |                                |
+  |-- Firebase Auth (login) ------>|
+  |                                |
+  |-- GET /api/clover/status ----->|-- Verify Firebase token
+  |                                |-- Query Firestore
+  |                                |
+  |-- GET /api/clover/oauth/start->|-- Generate OAuth state
+  |                                |-- Redirect to Clover
+  |                                |
+  |-- POST /api/chat ------------>|-- Verify Firebase token
+  |                                |-- Load Clover credentials from Firestore
+  |                                |-- Call OpenAI with tool definitions
+  |                                |-- Execute tools against Clover API
+  |                                |-- Return assistant response
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Key security rules:
+- Clover tokens never reach the browser
+- The LLM cannot call Clover directly — only approved backend tools
+- All API routes verify Firebase ID tokens server-side
+- OAuth state is signed and single-use
+
+## Project Structure
+
+```
+src/
+  app/
+    login/page.tsx          # Firebase Auth login
+    app/
+      layout.tsx            # Protected app shell with nav
+      page.tsx              # Dashboard home
+      chat/page.tsx         # Chat interface
+      settings/page.tsx     # Clover connection settings
+    api/
+      chat/route.ts         # Chat endpoint with OpenAI tool calling
+      clover/
+        oauth/start/route.ts    # Start Clover OAuth
+        oauth/callback/route.ts # Handle Clover OAuth callback
+        status/route.ts         # Check Clover connection
+  lib/
+    firebase/
+      client.ts             # Firebase client SDK setup
+      admin.ts              # Firebase Admin SDK setup
+      auth-context.tsx       # React auth context provider
+    auth/
+      getCurrentUser.ts      # Server-side token verification
+    orgs/
+      getUserOrg.ts          # Organization resolution
+    clover/
+      client.ts              # Clover REST API client
+      oauth.ts               # Clover OAuth helpers
+      tools.ts               # Analytics tool implementations
+    ai/
+      openai.ts              # OpenAI client setup
+      toolSchemas.ts         # Tool definitions for function calling
+  types/
+    index.ts                 # Shared TypeScript types
+```
+
+## Production TODOs
+
+- [ ] Move Clover access tokens from Firestore to Google Secret Manager
+- [ ] Add rate limiting to API routes
+- [ ] Add query result caching for Clover API calls
+- [ ] Handle Clover API pagination for high-volume merchants
+- [ ] Add Clover disconnect flow
+- [ ] Add streaming responses for better chat UX
+- [ ] Add error monitoring (Sentry or similar)
+- [ ] Set up Firestore security rules

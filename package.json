@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "bq:setup": "node scripts/bq-setup.mjs",
-    "bq:seed": "node scripts/bq-seed.mjs"
+    "bq:seed": "node scripts/bq-seed.mjs",
+    "clover:categorize": "node scripts/clover-categorize.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase/admin";
 import {
   validateOAuthState,
   exchangeCodeForToken,
   getCloverEnvironment,
 } from "@/lib/clover/oauth";
+import { CloverClient } from "@/lib/clover/client";
+import { upsertMerchant } from "@/lib/clover/merchants";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
@@ -39,33 +40,28 @@ export async function GET(request: NextRequest) {
     }
 
     // TODO: Move access token storage to Google Secret Manager before production.
-    // Storing tokens in Firestore is acceptable for local development only.
-    const now = new Date();
-    const integrationRef = adminDb
-      .collection("organizations")
-      .doc(stateData.orgId)
-      .collection("integrations")
-      .doc("clover");
-
-    await integrationRef.set({
+    // Fetch the merchant's name + timezone for the locations list.
+    const env = getCloverEnvironment();
+    const client = new CloverClient({
+      accessToken: tokenData.accessToken,
       merchantId,
+    });
+    const name = await client.getMerchantInfo().then((m) => m?.name ?? null).catch(() => null);
+    const timezone = await client.getMerchantTimezone().catch(() => null);
+
+    // Upsert keyed by merchantId — connecting another location ADDS a row
+    // instead of overwriting, so multi-location businesses accumulate locations.
+    await upsertMerchant(stateData.orgId, {
+      merchantId,
+      name,
       status: "active",
-      environment: getCloverEnvironment(),
+      environment: env,
+      source: "oauth",
       accessToken: tokenData.accessToken,
       refreshToken: tokenData.refreshToken ?? null,
       accessTokenExpiration: tokenData.accessTokenExpiration ?? null,
-      connectedAt: now,
-      updatedAt: now,
+      timezone,
     });
-
-    // Also store merchant ID on the org document for quick lookups
-    await adminDb
-      .collection("organizations")
-      .doc(stateData.orgId)
-      .update({
-        cloverMerchantId: merchantId,
-        cloverConnectedAt: now,
-      });
 
     return NextResponse.redirect(`${appUrl}/app/settings?connected=true`);
   } catch (error) {

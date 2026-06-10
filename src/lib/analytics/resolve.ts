@@ -1,5 +1,8 @@
-import { adminDb } from "@/lib/firebase/admin";
 import { CloverClient } from "@/lib/clover/client";
+import {
+  getPrimaryMerchant,
+  getConnectedMerchants,
+} from "@/lib/clover/merchants";
 import {
   type AnalyticsProvider,
   type AnalyticsSource,
@@ -14,6 +17,8 @@ export type ResolvedAnalytics =
       analytics: AnalyticsProvider;
       timeZone: string;
       source: AnalyticsSource;
+      /** The org's owned location IDs (= its connected merchant IDs). */
+      allowedLocationIds: string[];
     }
   | { ok: false; error: "not_connected" };
 
@@ -29,51 +34,41 @@ export async function resolveAnalytics(
   const source = getAnalyticsSource();
 
   if (source === "bigquery") {
+    // Tenant isolation: scope analytics to ONLY this org's connected merchants.
+    const allowedLocationIds = (await getConnectedMerchants(orgId)).map(
+      (m) => m.merchantId
+    );
+    if (allowedLocationIds.length === 0) {
+      return { ok: false, error: "not_connected" };
+    }
     return {
       ok: true,
-      analytics: createBigQueryAnalytics(),
+      analytics: createBigQueryAnalytics(allowedLocationIds),
       timeZone: process.env.ANALYTICS_TZ ?? "America/New_York",
       source,
+      allowedLocationIds,
     };
   }
 
-  const ref = adminDb
-    .collection("organizations")
-    .doc(orgId)
-    .collection("integrations")
-    .doc("clover");
-  const snap = await ref.get();
-  const integration = snap.data();
-  if (!integration || integration.status !== "active") {
+  // Live Clover mode is single-merchant: use the primary connected location.
+  // (Multi-location analytics run through the BigQuery warehouse, fed by sync.)
+  const primary = await getPrimaryMerchant(orgId);
+  if (!primary) {
     return { ok: false, error: "not_connected" };
   }
 
-  let timeZone: string = integration.timezone ?? "UTC";
-  if (!integration.timezone) {
-    try {
-      const tz = await new CloverClient({
-        accessToken: integration.accessToken,
-        merchantId: integration.merchantId,
-      }).getMerchantTimezone();
-      if (tz) {
-        timeZone = tz;
-        await ref.set({ timezone: tz }, { merge: true });
-      }
-    } catch {
-      // fall back to UTC
-    }
-  }
-
+  const timeZone = primary.timezone ?? "UTC";
   return {
     ok: true,
     analytics: createCloverAnalytics(
       new CloverClient({
-        accessToken: integration.accessToken,
-        merchantId: integration.merchantId,
+        accessToken: primary.accessToken,
+        merchantId: primary.merchantId,
         timeZone,
       })
     ),
     timeZone,
     source,
+    allowedLocationIds: [primary.merchantId],
   };
 }

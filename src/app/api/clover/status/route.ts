@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/getCurrentUser";
 import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
-import { adminDb } from "@/lib/firebase/admin";
+import { getConnectedMerchants } from "@/lib/clover/merchants";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -11,24 +11,18 @@ export async function GET() {
 
   const org = await ensureUserOrg(user.uid, user.email ?? "");
   if (!org) {
-    return NextResponse.json({ connected: false });
+    return NextResponse.json({ connected: false, count: 0 });
   }
 
-  const integrationDoc = await adminDb
-    .collection("organizations")
-    .doc(org.orgId)
-    .collection("integrations")
-    .doc("clover")
-    .get();
+  const merchants = await getConnectedMerchants(org.orgId);
+  const active = merchants.filter((m) => m.status === "active");
+  const primary = active[0] ?? merchants[0] ?? null;
 
-  if (!integrationDoc.exists) {
-    return NextResponse.json({ connected: false });
-  }
-
-  const data = integrationDoc.data();
   return NextResponse.json({
-    connected: data?.status === "active",
-    merchantId: data?.merchantId ?? null,
-    environment: data?.environment ?? null,
+    connected: active.length > 0,
+    count: active.length,
+    // Back-compat single-merchant fields (dashboard still reads these).
+    merchantId: primary?.merchantId ?? null,
+    environment: primary?.environment ?? null,
   });
 }

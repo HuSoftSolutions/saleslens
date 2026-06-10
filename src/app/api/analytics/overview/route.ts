@@ -16,7 +16,7 @@ export async function GET() {
   const r = await resolveAnalytics(org.orgId);
   if (!r.ok) return NextResponse.json({ connected: false });
 
-  const { analytics, timeZone, source } = r;
+  const { analytics, timeZone, source, allowedLocationIds } = r;
   const today = ymdInTz(new Date(), timeZone);
   const weekStart = addDaysYmd(today, -6);
   const prevStart = addDaysYmd(today, -13);
@@ -34,10 +34,9 @@ export async function GET() {
 
     let topLocation: { name: string; grossSales: number } | null = null;
     if (source === "bigquery") {
-      const locs = await createBigQueryAnalytics().getSalesByLocation(
-        weekStart,
-        today
-      );
+      const locs = await createBigQueryAnalytics(
+        allowedLocationIds
+      ).getSalesByLocation(weekStart, today);
       if (locs.length)
         topLocation = { name: locs[0].name, grossSales: locs[0].grossSales };
     }

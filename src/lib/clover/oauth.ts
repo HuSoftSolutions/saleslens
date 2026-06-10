@@ -120,6 +120,10 @@ export function buildAuthorizationUrl(state: string): string {
  * - Content-Type: application/json
  * - Body: { client_id, client_secret, code }
  * - Response: { access_token, access_token_expiration, refresh_token, refresh_token_expiration }
+ *
+ * We also echo redirect_uri: the authorize request includes it, so per OAuth 2.0
+ * the code is bound to it and it must match on exchange (otherwise Clover returns
+ * 401 "Failed to validate authentication code").
  */
 export async function exchangeCodeForToken(
   code: string
@@ -127,6 +131,7 @@ export async function exchangeCodeForToken(
   const { apiBase } = getCloverUrls();
   const clientId = process.env.CLOVER_CLIENT_ID;
   const clientSecret = process.env.CLOVER_CLIENT_SECRET;
+  const redirectUri = process.env.CLOVER_REDIRECT_URI;
 
   if (!clientId || !clientSecret) {
     throw new Error("Missing CLOVER_CLIENT_ID or CLOVER_CLIENT_SECRET");
@@ -139,6 +144,7 @@ export async function exchangeCodeForToken(
       client_id: clientId,
       client_secret: clientSecret,
       code,
+      ...(redirectUri ? { redirect_uri: redirectUri } : {}),
     }),
   });
 
@@ -149,6 +155,38 @@ export async function exchangeCodeForToken(
 
   const data = await res.json();
 
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    accessTokenExpiration: data.access_token_expiration,
+  };
+}
+
+/**
+ * Refresh an expired/expiring OAuth access token using the refresh token.
+ *
+ * Per Clover v2: POST {apiBase}/oauth/v2/refresh with JSON { client_id, refresh_token }.
+ * Returns the new access token (+ possibly a rotated refresh token) and expiry.
+ */
+export async function refreshAccessToken(refreshToken: string): Promise<{
+  accessToken: string;
+  refreshToken?: string;
+  accessTokenExpiration?: number;
+}> {
+  const { apiBase } = getCloverUrls();
+  const clientId = process.env.CLOVER_CLIENT_ID;
+  if (!clientId) throw new Error("Missing CLOVER_CLIENT_ID");
+
+  const res = await fetch(`${apiBase}/oauth/v2/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, refresh_token: refreshToken }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Clover token refresh failed: ${res.status} ${text}`);
+  }
+  const data = await res.json();
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,

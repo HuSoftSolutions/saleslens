@@ -25,6 +25,26 @@ export interface CloverIntegration {
   updatedAt: Timestamp;
 }
 
+/**
+ * A single connected Clover merchant = one business location.
+ * Stored at organizations/{orgId}/cloverMerchants/{merchantId}.
+ * In production a multi-location business has one of these per location.
+ */
+export interface CloverMerchant {
+  merchantId: string;
+  name: string | null;
+  status: "active" | "error";
+  environment: "sandbox" | "production";
+  /** How it was connected — "oauth" (production) or "token" (dev/API token). */
+  source: "oauth" | "token";
+  accessToken: string;
+  refreshToken?: string | null;
+  accessTokenExpiration?: number | null;
+  timezone?: string | null;
+  connectedAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export interface ChatThread {
   createdBy: string;
   createdAt: Timestamp;

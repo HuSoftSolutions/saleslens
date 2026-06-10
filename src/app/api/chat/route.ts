@@ -120,14 +120,14 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const { analytics, timeZone, source } = resolved;
+  const { analytics, timeZone, source, allowedLocationIds } = resolved;
 
   // Prompt extras: in BigQuery mode, list locations so the model can filter by
   // name; honor an optional global location scope from the UI selector.
   let promptExtra = "";
   if (source === "bigquery") {
     try {
-      const locs = await getLocations();
+      const locs = await getLocations(allowedLocationIds);
       if (locs.length) {
         promptExtra +=
           `\n\nThis business has ${locs.length} locations. When the user names a location, pass its name to the \`location\` tool argument; omit \`location\` to report all locations combined. Locations: ` +

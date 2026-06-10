@@ -40,8 +40,20 @@ export interface CloverOrder {
   total?: number;
   createdTime: number;
   lineItems?: {
-    elements: Array<{ name: string; price: number; unitQty?: number }>;
+    elements: Array<{
+      name: string;
+      price: number;
+      unitQty?: number;
+      item?: { id?: string };
+    }>;
   };
+}
+
+export interface CloverItem {
+  id: string;
+  name: string;
+  /** First category name, if the item is categorized in Clover. */
+  category: string | null;
 }
 
 /**
@@ -225,6 +237,30 @@ export class CloverClient {
     }
 
     return this.request<MerchantResponse>("");
+  }
+
+  /**
+   * Fetch the merchant's inventory items with their Clover category, so synced
+   * line items can be tagged (Food / Drinks / Sim Time / …).
+   *
+   * Endpoint: GET /v3/merchants/{mId}/items?expand=categories
+   */
+  async getItems(): Promise<CloverItem[]> {
+    interface ItemEl {
+      id: string;
+      name: string;
+      categories?: { elements?: Array<{ name?: string }> };
+    }
+    const { elements } = await this.requestAllElements<ItemEl>(
+      "/items",
+      { expand: "categories" },
+      []
+    );
+    return elements.map((i) => ({
+      id: i.id,
+      name: i.name,
+      category: i.categories?.elements?.[0]?.name ?? null,
+    }));
   }
 
   /**

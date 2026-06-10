@@ -33,9 +33,18 @@ async function q<T>(
   return rows as T[];
 }
 
-export async function getLocations(): Promise<{ id: string; name: string }[]> {
+/**
+ * List warehouse locations the org owns. ALWAYS scoped to allowedIds — never
+ * returns locations belonging to other tenants. Empty list → no locations.
+ */
+export async function getLocations(
+  allowedIds: string[]
+): Promise<{ id: string; name: string }[]> {
+  if (!allowedIds.length) return [];
   const rows = await q<{ location_id: string; name: string }>(
-    `SELECT location_id, name FROM \`${RAW()}.locations\` ORDER BY location_id`
+    `SELECT location_id, name FROM \`${RAW()}.locations\`
+     WHERE location_id IN UNNEST(@ids) ORDER BY location_id`,
+    { ids: allowedIds }
   );
   return rows.map((r) => ({ id: r.location_id, name: r.name }));
 }
@@ -48,11 +57,16 @@ function hourLabel(h: number): string {
 }
 
 /**
- * BigQuery-backed analytics provider. Reads the rollup views / raw tables in
- * the warehouse instead of paginating Clover live. Supports an optional
- * `location` filter (matched by id or name); omit it to aggregate all locations.
+ * BigQuery-backed analytics provider, **scoped to a single org's location IDs**
+ * (its connected Clover merchant IDs). Every query is filtered to allowedIds so
+ * one tenant can never read another tenant's data from the shared warehouse.
  */
-export function createBigQueryAnalytics() {
+export function createBigQueryAnalytics(allowedIds: string[]) {
+  // Tenant isolation: every query ANDs `location_id IN @__locs`. Empty allowedIds
+  // matches nothing (safe default).
+  const scopeParams = { __locs: allowedIds };
+  const scope = (col = "location_id") => ` AND ${col} IN UNNEST(@__locs)`;
+
   let locCache: { id: string; name: string }[] | null = null;
 
   async function resolveLocation(location?: string): Promise<{
@@ -60,13 +74,13 @@ export function createBigQueryAnalytics() {
     params: Record<string, unknown>;
   }> {
     if (!location || !location.trim()) return { where: "", params: {} };
-    if (!locCache) locCache = await getLocations();
+    if (!locCache) locCache = await getLocations(allowedIds);
     const t = location.trim().toLowerCase();
     const match =
       locCache.find((l) => l.id.toLowerCase() === t) ??
       locCache.find((l) => l.name.toLowerCase() === t) ??
       locCache.find((l) => l.name.toLowerCase().includes(t));
-    if (!match) return { where: "", params: {} }; // unknown → all locations
+    if (!match) return { where: "", params: {} }; // unknown → all (still org-scoped)
     return { where: " AND location_id = @loc", params: { loc: match.id } };
   }
 
@@ -87,8 +101,8 @@ export function createBigQueryAnalytics() {
          SUM(gross_cents) AS gross, SUM(payment_count) AS cnt,
          SUM(tip_cents) AS tip, SUM(tax_cents) AS tax, SUM(refund_cents) AS refund
        FROM \`${MARTS()}.daily_sales_by_location\`
-       WHERE date BETWEEN @start AND @end${loc.where}`,
-      { start: startDate, end: endDate, ...loc.params }
+       WHERE date BETWEEN @start AND @end${scope()}${loc.where}`,
+      { start: startDate, end: endDate, ...scopeParams, ...loc.params }
     );
     const gross = Number(row?.gross ?? 0);
     const count = Number(row?.cnt ?? 0);
@@ -136,14 +150,13 @@ export function createBigQueryAnalytics() {
     location?: string
   ): Promise<TopSellingItem[]> {
     const loc = await resolveLocation(location);
-    // Exclude bay bookings (category 'Sim Time') so "top items" = real menu items.
     const rows = await q<{ name: string; quantity: number; gross: number }>(
       `SELECT item_name AS name, SUM(quantity) AS quantity, SUM(gross_cents) AS gross
        FROM \`${MARTS()}.item_sales_daily\`
        WHERE date BETWEEN @start AND @end
-         AND (category IS NULL OR category != 'Sim Time')${loc.where}
+         AND (category IS NULL OR category != 'Sim Time')${scope()}${loc.where}
        GROUP BY name ORDER BY quantity DESC LIMIT @limit`,
-      { start: startDate, end: endDate, limit, ...loc.params }
+      { start: startDate, end: endDate, limit, ...scopeParams, ...loc.params }
     );
     return rows.map((r) => ({
       name: r.name,
@@ -161,8 +174,8 @@ export function createBigQueryAnalytics() {
     const [row] = await q<{ cnt: number | null; total: number | null }>(
       `SELECT COUNT(*) AS cnt, SUM(refund_cents) AS total
        FROM \`${RAW()}.payments\`
-       WHERE created_date BETWEEN @start AND @end AND refund_cents > 0${loc.where}`,
-      { start: startDate, end: endDate, ...loc.params }
+       WHERE created_date BETWEEN @start AND @end AND refund_cents > 0${scope()}${loc.where}`,
+      { start: startDate, end: endDate, ...scopeParams, ...loc.params }
     );
     return {
       refundCount: Number(row?.cnt ?? 0),
@@ -179,18 +192,16 @@ export function createBigQueryAnalytics() {
     location?: string
   ): Promise<HourlySalesBreakdown[]> {
     const loc = await resolveLocation(location);
-    const base = { start: startDate, end: endDate, ...loc.params };
+    const base = { start: startDate, end: endDate, ...scopeParams, ...loc.params };
 
-    // Order counts per hour (all orders, regardless of item filter).
     const orderRows = await q<{ hour: number; order_count: number }>(
       `SELECT local_hour AS hour, COUNT(*) AS order_count
        FROM \`${RAW()}.orders\`
-       WHERE created_date BETWEEN @start AND @end${loc.where}
+       WHERE created_date BETWEEN @start AND @end${scope()}${loc.where}
        GROUP BY hour`,
       base
     );
 
-    // Item-level metrics per hour (optionally filtered to one item).
     const itemFilter = itemName ? " AND LOWER(item_name) = @item" : "";
     const itemRows = await q<{
       hour: number;
@@ -201,7 +212,7 @@ export function createBigQueryAnalytics() {
       `SELECT local_hour AS hour, item_name, SUM(quantity) AS qty,
               SUM(price_cents * quantity) AS gross
        FROM \`${RAW()}.order_line_items\`
-       WHERE created_date BETWEEN @start AND @end${loc.where}${itemFilter}
+       WHERE created_date BETWEEN @start AND @end${scope()}${loc.where}${itemFilter}
        GROUP BY hour, item_name`,
       itemName ? { ...base, item: itemName.toLowerCase() } : base
     );
@@ -258,9 +269,9 @@ export function createBigQueryAnalytics() {
     const rows = await q<{ category: string; gross: number; qty: number }>(
       `SELECT category, SUM(gross_cents) AS gross, SUM(quantity) AS qty
        FROM \`${MARTS()}.category_sales_daily\`
-       WHERE date BETWEEN @start AND @end${loc.where}
+       WHERE date BETWEEN @start AND @end${scope()}${loc.where}
        GROUP BY category ORDER BY gross DESC`,
-      { start: startDate, end: endDate, ...loc.params }
+      { start: startDate, end: endDate, ...scopeParams, ...loc.params }
     );
     return rows.map((r) => ({
       category: r.category,
@@ -285,7 +296,6 @@ export function createBigQueryAnalytics() {
     }[]
   > {
     const loc = await resolveLocation(location);
-    // Utilization = booked minutes ÷ available minutes (12 open hours/day × days).
     const [y1, m1, d1] = startDate.split("-").map(Number);
     const [y2, m2, d2] = endDate.split("-").map(Number);
     const days =
@@ -306,10 +316,10 @@ export function createBigQueryAnalytics() {
               SUM(u.gross_cents) AS gross
        FROM \`${MARTS()}.bay_utilization_daily\` u
        LEFT JOIN \`${RAW()}.locations\` l ON l.location_id = u.location_id
-       WHERE u.date BETWEEN @start AND @end${loc.where.replace(/location_id/g, "u.location_id")}
+       WHERE u.date BETWEEN @start AND @end${scope("u.location_id")}${loc.where.replace(/location_id/g, "u.location_id")}
        GROUP BY name, u.bay_name
        ORDER BY gross DESC LIMIT 50`,
-      { start: startDate, end: endDate, ...loc.params }
+      { start: startDate, end: endDate, ...scopeParams, ...loc.params }
     );
     return rows.map((r) => ({
       location: r.name,
@@ -336,9 +346,9 @@ export function createBigQueryAnalytics() {
     const rows = await q<{ hour: number; bookings: number; gross: number }>(
       `SELECT local_hour AS hour, COUNT(*) AS bookings, SUM(price_cents) AS gross
        FROM \`${RAW()}.bookings\`
-       WHERE created_date BETWEEN @start AND @end${loc.where}
+       WHERE created_date BETWEEN @start AND @end${scope()}${loc.where}
        GROUP BY hour ORDER BY hour`,
-      { start: startDate, end: endDate, ...loc.params }
+      { start: startDate, end: endDate, ...scopeParams, ...loc.params }
     );
     return rows.map((r) => ({
       hour: Number(r.hour),
@@ -364,10 +374,10 @@ export function createBigQueryAnalytics() {
               SUM(d.gross_cents) AS gross, SUM(d.payment_count) AS cnt
        FROM \`${MARTS()}.daily_sales_by_location\` d
        LEFT JOIN \`${RAW()}.locations\` l ON l.location_id = d.location_id
-       WHERE d.date BETWEEN @start AND @end
+       WHERE d.date BETWEEN @start AND @end${scope("d.location_id")}
        GROUP BY d.location_id, name
        ORDER BY gross DESC`,
-      { start: startDate, end: endDate }
+      { start: startDate, end: endDate, ...scopeParams }
     );
     return rows.map((r) => ({
       locationId: r.location_id,

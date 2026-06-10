@@ -11,6 +11,11 @@ export interface ConnectedMerchant {
   refreshToken?: string | null;
   accessTokenExpiration?: number | null;
   timezone?: string | null;
+  // Sync watermarks, written by the sync scheduler (see syncScheduler.ts).
+  syncLastDate?: string | null;
+  syncHistoryStart?: string | null;
+  syncBackfillTarget?: string | null;
+  syncBackfillStatus?: "pending" | "running" | "complete" | "error" | null;
 }
 
 function merchantsRef(orgId: string) {

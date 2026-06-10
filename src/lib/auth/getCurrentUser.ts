@@ -4,6 +4,13 @@ import { adminAuth } from "@/lib/firebase/admin";
 export interface AuthenticatedUser {
   uid: string;
   email: string | undefined;
+  /**
+   * Platform-level super-admin. Sourced from the `platformAdmin` custom claim,
+   * which is signed into the ID token and cannot be forged client-side.
+   * Grants account/lifecycle management of the SalesLens platform — NOT access
+   * to any business's sales, analytics, or chat data.
+   */
+  platformAdmin: boolean;
 }
 
 /**
@@ -25,6 +32,7 @@ export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
     return {
       uid: decoded.uid,
       email: decoded.email,
+      platformAdmin: decoded.platformAdmin === true,
     };
   } catch {
     return null;

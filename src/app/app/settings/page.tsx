@@ -1,5 +1,6 @@
 import { LocationsCard } from "@/components/locations-card";
 import { UsageLimitsCard } from "@/components/usage-limits-card";
+import { SupportAccessCard } from "@/components/support-access-card";
 
 export default function SettingsPage() {
   return (
@@ -13,6 +14,7 @@ export default function SettingsPage() {
 
       <LocationsCard />
       <UsageLimitsCard />
+      <SupportAccessCard />
     </div>
   );
 }

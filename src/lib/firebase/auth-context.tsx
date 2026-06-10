@@ -45,9 +45,23 @@ export function useAuth() {
 
 /**
  * Helper to get the current user's ID token for API calls.
+ * Pass forceRefresh=true to pick up newly-minted custom claims (e.g. platformAdmin).
  */
-export async function getIdToken(): Promise<string | null> {
+export async function getIdToken(forceRefresh = false): Promise<string | null> {
   const user = getClientAuth().currentUser;
   if (!user) return null;
-  return user.getIdToken();
+  return user.getIdToken(forceRefresh);
+}
+
+/**
+ * Reads the platformAdmin custom claim from the current ID token.
+ * Pass forceRefresh=true to bypass the cached token after a claim change.
+ */
+export async function getPlatformAdminClaim(
+  forceRefresh = false
+): Promise<boolean> {
+  const user = getClientAuth().currentUser;
+  if (!user) return false;
+  const result = await user.getIdTokenResult(forceRefresh);
+  return result.claims.platformAdmin === true;
 }

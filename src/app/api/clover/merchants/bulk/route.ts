@@ -1,9 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { CloverClient } from "@/lib/clover/client";
 import { upsertMerchant } from "@/lib/clover/merchants";
+import {
+  initMerchantBackfill,
+  runConnectBackfill,
+} from "@/lib/clover/syncScheduler";
+
+export const maxDuration = 300; // background backfill on connect
 
 const schema = z.object({
   environment: z.enum(["sandbox", "production"]).optional(),
@@ -23,11 +28,9 @@ const schema = z.object({
  * and reports per-entry success/failure. For fast multi-location onboarding.
  */
 export async function POST(request: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) return NextResponse.json({ error: "No organization" }, { status: 403 });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   let body: z.infer<typeof schema>;
   try {
@@ -68,6 +71,15 @@ export async function POST(request: NextRequest) {
     })
   );
 
-  const added = results.filter((r) => r.ok).length;
-  return NextResponse.json({ added, total: results.length, results });
+  const addedIds = results.filter((r) => r.ok).map((r) => r.merchantId);
+  if (addedIds.length) {
+    await Promise.all(addedIds.map((id) => initMerchantBackfill(org.orgId, id)));
+    after(() => runConnectBackfill(org.orgId, addedIds));
+  }
+
+  return NextResponse.json({
+    added: addedIds.length,
+    total: results.length,
+    results,
+  });
 }

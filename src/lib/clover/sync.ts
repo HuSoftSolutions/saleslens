@@ -60,13 +60,22 @@ export interface SyncResult {
  */
 export async function syncMerchants(
   orgId: string,
-  opts: { days?: number; merchantId?: string; now?: number } = {}
+  opts: {
+    days?: number;
+    merchantId?: string;
+    now?: number;
+    /** Explicit YYYY-MM-DD range. Overrides `days` when both start and end are set. */
+    startDate?: string;
+    endDate?: string;
+  } = {}
 ): Promise<SyncResult> {
   const { days = 90, merchantId, now = Date.now() } = opts;
   let merchants = await getConnectedMerchants(orgId);
   if (merchantId) merchants = merchants.filter((m) => m.merchantId === merchantId);
-  const endDate = ymd(new Date(now));
-  const startDate = ymd(new Date(now - days * 86_400_000));
+  // Explicit range (used by the scheduler for incremental + backfill chunks),
+  // otherwise a trailing window of `days` ending today.
+  const endDate = opts.endDate ?? ymd(new Date(now));
+  const startDate = opts.startDate ?? ymd(new Date(now - days * 86_400_000));
 
   const result: SyncResult = {
     merchants: 0,

@@ -1,13 +1,13 @@
 import { cn } from "@/lib/utils";
 
-export interface ChartData {
+export interface BarChartData {
   type: "bar";
   title: string;
   unit: "qty" | "currency";
   data: { label: string; value: number }[];
 }
 
-function fmt(value: number, unit: ChartData["unit"]) {
+function fmt(value: number, unit: BarChartData["unit"]) {
   if (unit === "currency")
     return "$" + value.toLocaleString(undefined, { maximumFractionDigits: 0 });
   return value.toLocaleString();
@@ -18,7 +18,7 @@ export function BarChart({
   chart,
   className,
 }: {
-  chart: ChartData;
+  chart: BarChartData;
   className?: string;
 }) {
   const max = Math.max(...chart.data.map((d) => d.value), 1);

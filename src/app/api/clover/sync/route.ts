@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { syncMerchants } from "@/lib/clover/sync";
 
 export const maxDuration = 300; // sync can take a while for large ranges
@@ -16,11 +15,9 @@ const schema = z.object({
  * Triggered from Settings (and, in production, a Vercel Cron on a schedule).
  */
 export async function POST(request: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) return NextResponse.json({ error: "No organization" }, { status: 403 });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   let parsed: z.infer<typeof schema>;
   try {

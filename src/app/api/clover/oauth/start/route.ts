@@ -23,6 +23,14 @@ export async function GET(request: NextRequest) {
     // Ensure user has an org
     const org = await ensureUserOrg(uid, email);
 
+    // Suspended accounts cannot connect new locations.
+    if (org.suspended) {
+      return NextResponse.json(
+        { error: "This account is suspended. Please contact support." },
+        { status: 403 }
+      );
+    }
+
     // Generate CSRF-safe state
     const state = await generateOAuthState(uid, org.orgId);
 

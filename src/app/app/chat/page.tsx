@@ -18,7 +18,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LogoMark } from "@/components/brand";
 import { Markdown } from "@/components/markdown";
-import { BarChart, type ChartData } from "@/components/bar-chart";
+import { ChatChart, type ChartData } from "@/components/chat-chart";
 import { cn } from "@/lib/utils";
 
 interface Message {
@@ -45,10 +45,12 @@ const SUGGESTIONS = [
 ];
 
 const FOLLOW_UPS = [
-  "Break it down by location",
   "Compare to last week",
+  "Compare to last month",
+  "Compare to last year",
+  "Compare to the same period last year",
+  "Break it down by location",
   "Show me the busiest hours",
-  "What about refunds?",
 ];
 
 function relativeTime(iso: string | null): string {
@@ -442,7 +444,7 @@ function MessageRow({
           ) : (
             <>
               <Markdown>{msg.content}</Markdown>
-              {msg.chart && <BarChart chart={msg.chart} />}
+              {msg.chart && <ChatChart chart={msg.chart} />}
             </>
           )}
         </div>

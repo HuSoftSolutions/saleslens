@@ -1,17 +1,14 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { getAnalyticsSource } from "@/lib/analytics";
 import { getLocations } from "@/lib/analytics/bigquery";
 import { getConnectedMerchants } from "@/lib/clover/merchants";
 
 /** List the org's own locations for the scope selector. Empty in clover mode. */
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) return NextResponse.json({ locations: [] });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   if (getAnalyticsSource() !== "bigquery") {
     return NextResponse.json({ locations: [] });

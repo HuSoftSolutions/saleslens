@@ -4,9 +4,10 @@ import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "firebase/auth";
-import { LayoutDashboard, MessageSquareText, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, MessageSquareText, Settings, LogOut, ShieldCheck } from "lucide-react";
 import { getClientAuth } from "@/lib/firebase/client";
 import { AuthProvider, useAuth } from "@/lib/firebase/auth-context";
+import { usePlatformAdmin } from "@/lib/platform/usePlatformAdmin";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Brand } from "@/components/brand";
@@ -21,6 +22,7 @@ const navItems = [
 
 function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const { isAdmin } = usePlatformAdmin();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -76,6 +78,17 @@ function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-1.5">
+            {isAdmin && (
+              <Button
+                variant="ghost"
+                size="sm"
+                nativeButton={false}
+                render={<Link href="/admin" />}
+              >
+                <ShieldCheck className="size-4" />
+                <span className="hidden md:inline">Admin</span>
+              </Button>
+            )}
             <span className="hidden text-xs text-muted-foreground md:inline">
               {user.email}
             </span>

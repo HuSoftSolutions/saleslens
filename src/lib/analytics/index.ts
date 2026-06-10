@@ -77,6 +77,12 @@ export interface AnalyticsProvider {
   ): Promise<
     { hour: number; label: string; bookings: number; grossSales: number }[]
   >;
+  getSalesByLocation?(
+    startDate: string,
+    endDate: string
+  ): Promise<
+    { locationId: string; name: string; grossSales: number; paymentCount: number }[]
+  >;
 }
 
 export type AnalyticsSource = "bigquery" | "clover";

@@ -51,10 +51,7 @@ export default function Home() {
         <Brand />
         <div className="flex items-center gap-2">
           <Link href="/login">
-            <Button variant="ghost" size="sm">Sign in</Button>
-          </Link>
-          <Link href="/login">
-            <Button size="sm">Get started</Button>
+            <Button size="sm">Sign in</Button>
           </Link>
         </div>
       </header>
@@ -77,16 +74,13 @@ export default function Home() {
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Link href="/login">
               <Button size="lg">
-                Get started free
+                Sign in
                 <ArrowRight className="size-4" />
               </Button>
             </Link>
-            <Link href="/login">
-              <Button variant="outline" size="lg">Sign in</Button>
-            </Link>
           </div>
           <p className="text-xs text-muted-foreground">
-            Works with Clover · Connect in under a minute
+            Works with Clover · Access by invitation
           </p>
 
           {/* Product preview */}
@@ -152,7 +146,7 @@ export default function Home() {
             </h2>
             <Link href="/login">
               <Button size="lg">
-                Get started free
+                Sign in
                 <ArrowRight className="size-4" />
               </Button>
             </Link>

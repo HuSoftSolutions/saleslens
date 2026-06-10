@@ -1,17 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { CloverClient } from "@/lib/clover/client";
 import { getConnectedMerchants, upsertMerchant } from "@/lib/clover/merchants";
+import {
+  initMerchantBackfill,
+  runConnectBackfill,
+} from "@/lib/clover/syncScheduler";
+
+export const maxDuration = 300; // background backfill on connect
 
 /** List connected Clover merchants (locations) for the org. */
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) return NextResponse.json({ merchants: [] });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   const merchants = (await getConnectedMerchants(org.orgId)).map((m) => ({
     merchantId: m.merchantId,
@@ -20,6 +23,12 @@ export async function GET() {
     environment: m.environment,
     source: m.source,
     timezone: m.timezone ?? null,
+    sync: {
+      lastDate: m.syncLastDate ?? null,
+      historyStart: m.syncHistoryStart ?? null,
+      backfillTarget: m.syncBackfillTarget ?? null,
+      backfillStatus: m.syncBackfillStatus ?? null,
+    },
   }));
   return NextResponse.json({ merchants });
 }
@@ -37,11 +46,9 @@ const addSchema = z.object({
  * sandbox by letting you add each test merchant's token.
  */
 export async function POST(request: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) return NextResponse.json({ error: "No organization" }, { status: 403 });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   let body: z.infer<typeof addSchema>;
   try {
@@ -77,6 +84,9 @@ export async function POST(request: NextRequest) {
     accessToken: body.accessToken,
     timezone,
   });
+
+  await initMerchantBackfill(org.orgId, body.merchantId);
+  after(() => runConnectBackfill(org.orgId, [body.merchantId]));
 
   return NextResponse.json({ ok: true, merchantId: body.merchantId, name });
 }

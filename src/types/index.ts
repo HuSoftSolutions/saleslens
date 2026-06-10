@@ -5,6 +5,13 @@ export interface Organization {
   createdAt: Timestamp;
   cloverMerchantId?: string;
   cloverConnectedAt?: Timestamp;
+  /**
+   * Platform lifecycle status. Absent = active. A suspended org is blocked from
+   * the customer request path (chat/analytics) but its account remains intact.
+   */
+  status?: "active" | "suspended";
+  suspendedAt?: Timestamp;
+  suspendedBy?: string;
 }
 
 export interface OrgUser {

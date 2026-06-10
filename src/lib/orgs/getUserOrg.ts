@@ -3,6 +3,8 @@ import { adminDb } from "@/lib/firebase/admin";
 export interface UserOrgResult {
   orgId: string;
   role: string;
+  /** Platform suspension state of the org. Suspended orgs are blocked from the request path. */
+  suspended: boolean;
 }
 
 /**
@@ -28,6 +30,8 @@ export async function getUserOrg(uid: string): Promise<UserOrgResult | null> {
       return {
         orgId: orgDoc.id,
         role: data?.role ?? "member",
+        // Org root doc is already loaded in orgsSnapshot — no extra read.
+        suspended: orgDoc.data()?.status === "suspended",
       };
     }
   }
@@ -61,5 +65,5 @@ export async function ensureUserOrg(
     createdAt: now,
   });
 
-  return { orgId: orgRef.id, role: "owner" };
+  return { orgId: orgRef.id, role: "owner", suspended: false };
 }

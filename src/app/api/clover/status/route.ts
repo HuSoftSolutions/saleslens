@@ -1,18 +1,11 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { getConnectedMerchants } from "@/lib/clover/merchants";
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) {
-    return NextResponse.json({ connected: false, count: 0 });
-  }
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   const merchants = await getConnectedMerchants(org.orgId);
   const active = merchants.filter((m) => m.status === "active");

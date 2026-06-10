@@ -1,26 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-} from "firebase/auth";
+import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { getClientAuth } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Brand } from "@/components/brand";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Already signed in (persisted session) → skip the form and go into the app.
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(getClientAuth(), (user) => {
+      if (user) router.replace("/app");
+      else setChecking(false);
+    });
+    return unsub;
+  }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -28,11 +35,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      if (isSignUp) {
-        await createUserWithEmailAndPassword(getClientAuth(), email, password);
-      } else {
-        await signInWithEmailAndPassword(getClientAuth(), email, password);
-      }
+      await signInWithEmailAndPassword(getClientAuth(), email, password);
       router.push("/app");
     } catch (err) {
       const message =
@@ -41,6 +44,15 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checking) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3">
+        <Skeleton className="size-9 rounded-lg" />
+        <Skeleton className="h-3 w-32" />
+      </div>
+    );
   }
 
   return (
@@ -58,12 +70,10 @@ export default function LoginPage() {
           <CardContent className="flex flex-col gap-5 py-2">
             <div className="text-center">
               <h1 className="text-lg font-semibold tracking-tight">
-                {isSignUp ? "Create your account" : "Welcome back"}
+                Welcome back
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                {isSignUp
-                  ? "Sign up to start exploring your data."
-                  : "Sign in to continue."}
+                Sign in to continue.
               </p>
             </div>
 
@@ -97,28 +107,16 @@ export default function LoginPage() {
                 />
               </div>
               <Button type="submit" disabled={loading} className="w-full">
-                {loading
-                  ? "Please wait…"
-                  : isSignUp
-                    ? "Create account"
-                    : "Sign in"}
+                {loading ? "Please wait…" : "Sign in"}
               </Button>
             </form>
           </CardContent>
         </Card>
 
-        <button
-          type="button"
-          onClick={() => {
-            setIsSignUp(!isSignUp);
-            setError(null);
-          }}
-          className="text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {isSignUp
-            ? "Already have an account? Sign in"
-            : "Need an account? Sign up"}
-        </button>
+        <p className="text-center text-sm text-muted-foreground">
+          Accounts are provisioned by SalesLens. Contact your administrator for
+          access.
+        </p>
       </div>
     </div>
   );

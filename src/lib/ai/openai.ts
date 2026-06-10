@@ -3,19 +3,51 @@ import { APP_NAME } from "@/lib/brand";
 
 let client: OpenAI | null = null;
 
+/** Vercel AI Gateway's OpenAI Chat Completions-compatible endpoint. */
+const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1";
+
+/** True when requests should route through the Vercel AI Gateway. */
+export function isUsingGateway(): boolean {
+  return Boolean(process.env.AI_GATEWAY_API_KEY);
+}
+
+/**
+ * Returns the OpenAI client. Prefers the Vercel AI Gateway (drop-in
+ * OpenAI-compatible endpoint) for observability, failover, per-user cost
+ * attribution, and one-line model switching. Falls back to calling OpenAI
+ * directly when only OPENAI_API_KEY is set (e.g. local dev without a gateway key).
+ */
 export function getOpenAIClient(): OpenAI {
-  if (!client) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("Missing OPENAI_API_KEY environment variable");
-    }
-    client = new OpenAI({ apiKey });
+  if (client) return client;
+
+  const gatewayKey = process.env.AI_GATEWAY_API_KEY;
+  if (gatewayKey) {
+    client = new OpenAI({ apiKey: gatewayKey, baseURL: AI_GATEWAY_BASE_URL });
+    return client;
   }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "Missing AI_GATEWAY_API_KEY (preferred) or OPENAI_API_KEY environment variable"
+    );
+  }
+  client = new OpenAI({ apiKey });
   return client;
 }
 
+/**
+ * The model id. Through the gateway, models are addressed as `provider/model`
+ * (e.g. `openai/gpt-4o`), so a bare OPENAI_MODEL is auto-prefixed with `openai/`.
+ * Set OPENAI_MODEL to e.g. `anthropic/claude-sonnet-4.6` to switch providers.
+ */
 export function getModel(): string {
-  return process.env.OPENAI_MODEL ?? "gpt-4o";
+  const configured = process.env.OPENAI_MODEL;
+  if (isUsingGateway()) {
+    const m = configured ?? "openai/gpt-4o";
+    return m.includes("/") ? m : `openai/${m}`;
+  }
+  return configured ?? "gpt-4o";
 }
 
 /** Hard cap on tokens generated per OpenAI response (cost guard). */
@@ -34,7 +66,7 @@ Rules:
 - Keep responses concise and business-friendly. Use dollar amounts and percentages where appropriate.
 - Round dollar amounts to 2 decimal places and percentages to 1 decimal place.
 - When comparing periods, highlight the most significant changes first.
-- If a tool call returns no data or empty results, tell the user and suggest they check the date range or Clover connection.
+- If a tool returns no data, say so plainly and suggest trying a different date range or that the data may not be synced yet. Do NOT claim the Clover connection is broken unless a tool result explicitly contains an authorization/connection error. If a requested breakdown isn't directly supported, use the closest tool (e.g. getSalesByLocation for "by location") rather than refusing.
 - Format every answer in Markdown. When presenting more than two rows of data (per-item, per-location, per-hour, period comparisons), use a Markdown table with a header row and concise columns; put the most important column first and money/quantity columns last. Bold the single most important figure in your summary. Keep prose brief — let the table carry the detail.`;
 
 /**
@@ -56,5 +88,7 @@ export function getSystemPrompt(timeZone: string = "UTC"): string {
   }).format(new Date());
   return `${SYSTEM_PROMPT}
 
-For all date calculations, today's date is ${today} in the merchant's local timezone (${timeZone}). Interpret relative ranges such as "today", "yesterday", "this week", and "last month" relative to this date. Always pass dates to tools in ISO YYYY-MM-DD format; the tools interpret them as full days in the merchant's local timezone.`;
+For all date calculations, today's date is ${today} in the merchant's local timezone (${timeZone}). Interpret relative ranges such as "today", "yesterday", "this week", and "last month" relative to this date. Always pass dates to tools in ISO YYYY-MM-DD format; the tools interpret them as full days in the merchant's local timezone.
+
+To compare two time periods (e.g. "vs last week/month/year", "same period last year", "how does this month compare"), use the comparePeriods tool with named presets — set "period" to what the user is asking about and "compareTo" to the baseline. Do NOT compute comparison dates yourself; the tool resolves exact dates in the merchant's timezone. Use compareTo preset "previous_period" for the equal-length span immediately before, or "same_period_last_week" / "same_period_last_month" / "same_period_last_year" to shift the same span back. The UI renders the result as a side-by-side comparison, so keep your prose summary brief and lead with the biggest change.`;
 }

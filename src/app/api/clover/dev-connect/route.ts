@@ -1,8 +1,13 @@
-import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { NextResponse, after } from "next/server";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { CloverClient } from "@/lib/clover/client";
 import { upsertMerchant } from "@/lib/clover/merchants";
+import {
+  initMerchantBackfill,
+  runConnectBackfill,
+} from "@/lib/clover/syncScheduler";
+
+export const maxDuration = 300; // background backfill on connect
 
 /**
  * POST /api/clover/dev-connect
@@ -22,12 +27,9 @@ export async function POST() {
     );
   }
 
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   // Look up name + timezone for the locations list.
   const client = new CloverClient({ accessToken: devToken, merchantId: devMerchantId });
@@ -43,6 +45,9 @@ export async function POST() {
     accessToken: devToken,
     timezone,
   });
+
+  await initMerchantBackfill(org.orgId, devMerchantId);
+  after(() => runConnectBackfill(org.orgId, [devMerchantId]));
 
   return NextResponse.json({ connected: true, merchantId: devMerchantId, name });
 }

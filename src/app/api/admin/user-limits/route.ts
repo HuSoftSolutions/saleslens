@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { FieldValue } from "firebase-admin/firestore";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { getUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { adminDb } from "@/lib/firebase/admin";
 import { defaultLimits } from "@/lib/limits/rateLimit";
 
@@ -12,11 +11,9 @@ function isAdmin(role: string) {
 
 /** List org members with their effective-override limits and today's usage. */
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await getUserOrg(user.uid);
-  if (!org) return NextResponse.json({ error: "No organization" }, { status: 403 });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
   if (!isAdmin(org.role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
@@ -54,11 +51,9 @@ const patchSchema = z.object({
 
 /** Set (or clear) a user's per-user limit overrides. */
 export async function POST(request: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await getUserOrg(user.uid);
-  if (!org) return NextResponse.json({ error: "No organization" }, { status: 403 });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
   if (!isAdmin(org.role))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 

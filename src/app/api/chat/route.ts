@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { adminDb } from "@/lib/firebase/admin";
 import {
   getOpenAIClient,
@@ -13,6 +12,12 @@ import { enforceRateLimit } from "@/lib/limits/rateLimit";
 import { toolDefinitions, simToolDefinitions } from "@/lib/ai/toolSchemas";
 import { resolveAnalytics } from "@/lib/analytics/resolve";
 import { getLocations } from "@/lib/analytics/bigquery";
+import {
+  ymdInTz,
+  resolveBasePeriod,
+  resolveComparePeriod,
+  type ResolvedPeriod,
+} from "@/lib/analytics/dates";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 const chatRequestSchema = z.object({
@@ -23,11 +28,63 @@ const chatRequestSchema = z.object({
 
 // TODO: Add query result caching for repeated date ranges
 
-interface ChartPayload {
+interface BarChartPayload {
   type: "bar";
   title: string;
   unit: "qty" | "currency";
   data: { label: string; value: number }[];
+}
+
+interface ComparisonPayload {
+  type: "comparison";
+  title: string;
+  current: { label: string };
+  baseline: { label: string };
+  metrics: {
+    key: string;
+    label: string;
+    unit: "currency" | "number";
+    current: number;
+    baseline: number;
+    deltaPct: number;
+    goodWhenUp: boolean;
+  }[];
+}
+
+type ChartPayload = BarChartPayload | ComparisonPayload;
+
+interface PeriodSpec {
+  preset?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+/** Resolve the "current" side: explicit range wins, else a named base preset. */
+function resolveCurrent(spec: PeriodSpec | undefined, today: string): ResolvedPeriod {
+  if (spec?.startDate && spec?.endDate) {
+    return {
+      startDate: spec.startDate,
+      endDate: spec.endDate,
+      label: `${spec.startDate} – ${spec.endDate}`,
+    };
+  }
+  return resolveBasePeriod(spec?.preset ?? "this_week", today);
+}
+
+/** Resolve the comparison side relative to the current period. */
+function resolveBaseline(
+  spec: PeriodSpec | undefined,
+  current: ResolvedPeriod,
+  today: string
+): ResolvedPeriod {
+  if (spec?.startDate && spec?.endDate) {
+    return {
+      startDate: spec.startDate,
+      endDate: spec.endDate,
+      label: `${spec.startDate} – ${spec.endDate}`,
+    };
+  }
+  return resolveComparePeriod(spec?.preset ?? "previous_period", current, today);
 }
 
 /** Build a chart payload from a chartable tool result (most recent wins). */
@@ -70,19 +127,59 @@ function buildChart(name: string, result: unknown): ChartPayload | null {
     if (data.length)
       return { type: "bar", title: "Bookings by hour", unit: "qty", data };
   }
+  if (name === "getSalesByLocation" && Array.isArray(result)) {
+    const data = (result as { name: string; grossSales: number }[])
+      .slice(0, 12)
+      .map((l) => ({ label: l.name, value: l.grossSales }));
+    if (data.length)
+      return { type: "bar", title: "Sales by location", unit: "currency", data };
+  }
+  if (
+    name === "comparePeriods" &&
+    result &&
+    typeof result === "object" &&
+    "current" in result
+  ) {
+    const r = result as {
+      current: Record<string, number> & { label: string };
+      baseline: Record<string, number> & { label: string };
+      deltasPct: Record<string, number>;
+    };
+    const metric = (
+      key: string,
+      label: string,
+      unit: "currency" | "number",
+      goodWhenUp: boolean
+    ) => ({
+      key,
+      label,
+      unit,
+      current: Number(r.current[key] ?? 0),
+      baseline: Number(r.baseline[key] ?? 0),
+      deltaPct: Number(r.deltasPct?.[key] ?? 0),
+      goodWhenUp,
+    });
+    return {
+      type: "comparison",
+      title: `${r.current.label} vs ${r.baseline.label}`,
+      current: { label: r.current.label },
+      baseline: { label: r.baseline.label },
+      metrics: [
+        metric("grossTotal", "Gross sales", "currency", true),
+        metric("paymentCount", "Payments", "number", true),
+        metric("averagePayment", "Avg ticket", "currency", true),
+        metric("tipTotal", "Tips", "currency", true),
+        metric("refundTotal", "Refunds", "currency", false),
+      ],
+    };
+  }
   return null;
 }
 
 export async function POST(request: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) {
-    return NextResponse.json({ error: "No organization found" }, { status: 403 });
-  }
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { user, org } = ctx;
 
   // Validate request body
   let body: z.infer<typeof chatRequestSchema>;
@@ -195,6 +292,8 @@ export async function POST(request: NextRequest) {
   // Call OpenAI with tool definitions. Sim tools are only offered in BigQuery
   // mode (bay bookings + categories live in the warehouse).
   const openai = getOpenAIClient();
+  // Per-tenant cost attribution in the AI Gateway dashboard (native OpenAI `user` param).
+  const aiUser = `${org.orgId}:${user.uid}`;
   const tools =
     source === "bigquery"
       ? [...toolDefinitions, ...simToolDefinitions]
@@ -213,6 +312,7 @@ export async function POST(request: NextRequest) {
       tools,
       tool_choice: "auto",
       max_completion_tokens: getMaxOutputTokens(),
+      user: aiUser,
     });
 
     // Handle tool calls in a loop (max 5 iterations to prevent runaway)
@@ -248,6 +348,24 @@ export async function POST(request: NextRequest) {
                 args.location
               );
               break;
+            case "comparePeriods": {
+              // Resolve presets to concrete dates server-side, in the merchant's
+              // timezone, so the model never does fragile date math.
+              const today = ymdInTz(new Date(), timeZone);
+              const current = resolveCurrent(args.period, today);
+              const baseline = resolveBaseline(args.compareTo, current, today);
+              const cmp = await analytics.compareSalesPeriods(
+                { startDate: baseline.startDate, endDate: baseline.endDate },
+                { startDate: current.startDate, endDate: current.endDate },
+                args.location
+              );
+              result = {
+                current: { label: current.label, ...cmp.periodB },
+                baseline: { label: baseline.label, ...cmp.periodA },
+                deltasPct: cmp.deltas,
+              };
+              break;
+            }
             case "getTopSellingItems":
               result = await analytics.getTopSellingItems(
                 args.startDate,
@@ -298,6 +416,11 @@ export async function POST(request: NextRequest) {
                   )
                 : { error: "Booking hours are not available in this mode." };
               break;
+            case "getSalesByLocation":
+              result = analytics.getSalesByLocation
+                ? await analytics.getSalesByLocation(args.startDate, args.endDate)
+                : { error: "Per-location breakdown is not available in this mode." };
+              break;
             default:
               result = { error: "Unknown tool" };
           }
@@ -336,6 +459,7 @@ export async function POST(request: NextRequest) {
         tools: toolDefinitions,
         tool_choice: "auto",
         max_completion_tokens: getMaxOutputTokens(),
+        user: aiUser,
       });
 
       iterations++;

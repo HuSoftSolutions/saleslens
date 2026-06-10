@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/getCurrentUser";
-import { ensureUserOrg } from "@/lib/orgs/getUserOrg";
+import { requireActiveOrg } from "@/lib/auth/requireActiveOrg";
 import { adminDb } from "@/lib/firebase/admin";
 
 /** List recent chat threads for the user's org. */
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const org = await ensureUserOrg(user.uid, user.email ?? "");
-  if (!org) return NextResponse.json({ threads: [] });
+  const ctx = await requireActiveOrg();
+  if (!ctx.ok) return ctx.response;
+  const { org } = ctx;
 
   const snap = await adminDb
     .collection("organizations")

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import {
   validateOAuthState,
   exchangeCodeForToken,
@@ -6,6 +6,12 @@ import {
 } from "@/lib/clover/oauth";
 import { CloverClient } from "@/lib/clover/client";
 import { upsertMerchant } from "@/lib/clover/merchants";
+import {
+  initMerchantBackfill,
+  runConnectBackfill,
+} from "@/lib/clover/syncScheduler";
+
+export const maxDuration = 300; // gives the background backfill room to run
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
@@ -62,6 +68,10 @@ export async function GET(request: NextRequest) {
       accessTokenExpiration: tokenData.accessTokenExpiration ?? null,
       timezone,
     });
+
+    // Auto-import: get current immediately, then backfill a year in the background.
+    await initMerchantBackfill(stateData.orgId, merchantId);
+    after(() => runConnectBackfill(stateData.orgId, [merchantId]));
 
     return NextResponse.redirect(`${appUrl}/app/settings?connected=true`);
   } catch (error) {

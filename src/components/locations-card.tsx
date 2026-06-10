@@ -34,6 +34,16 @@ interface Merchant {
   environment: string;
   source: "oauth" | "token";
   timezone: string | null;
+  sync?: {
+    lastDate: string | null;
+    historyStart: string | null;
+    backfillTarget: string | null;
+    backfillStatus: "pending" | "running" | "complete" | "error" | null;
+  };
+}
+
+function daysBetween(from: string, toIso: string): number {
+  return Math.round((Date.parse(toIso) - Date.parse(from)) / 86_400_000);
 }
 
 export function LocationsCard() {
@@ -48,6 +58,7 @@ export function LocationsCard() {
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [importingId, setImportingId] = useState<string | null>(null);
 
   async function authedFetch(url: string, init?: RequestInit) {
     const t = await getIdToken();
@@ -198,6 +209,33 @@ export function LocationsCard() {
     }
   }
 
+  async function importMore(merchantId: string, historyStart: string | null) {
+    setImportingId(merchantId);
+    setError(null);
+    setSyncMsg(null);
+    try {
+      const todayIso = `${new Date().toISOString().slice(0, 10)}T00:00:00Z`;
+      const currentDaysBack = historyStart ? daysBetween(historyStart, todayIso) : 0;
+      const days = Math.min(1825, currentDaysBack + 365); // pull another year deeper
+      const res = await authedFetch("/api/clover/backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ merchantId, days }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error ?? "Could not start import");
+      } else {
+        setSyncMsg(
+          "Importing more history in the background. Refresh in a minute to see updated coverage."
+        );
+        await load();
+      }
+    } finally {
+      setImportingId(null);
+    }
+  }
+
   async function disconnect(merchantId: string) {
     if (!confirm("Disconnect this location?")) return;
     setBusy(true);
@@ -271,9 +309,33 @@ export function LocationsCard() {
                     <span className="font-mono text-xs text-muted-foreground">
                       {m.merchantId}
                     </span>
+                    {m.sync && (
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {m.sync.backfillStatus === "pending" ||
+                        m.sync.backfillStatus === "running" ? (
+                          <span className="text-primary">Importing history…</span>
+                        ) : m.sync.historyStart ? (
+                          <>History from {m.sync.historyStart}</>
+                        ) : (
+                          <>Awaiting first sync</>
+                        )}
+                        {m.sync.lastDate ? ` · current to ${m.sync.lastDate}` : ""}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  {m.sync?.backfillStatus === "complete" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => importMore(m.merchantId, m.sync?.historyStart ?? null)}
+                      disabled={busy || importingId !== null}
+                      title="Pull another year of older history into the warehouse"
+                    >
+                      {importingId === m.merchantId ? "Importing…" : "Import more"}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"

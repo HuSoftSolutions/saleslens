@@ -35,9 +35,16 @@ export async function resolveAnalytics(
 
   if (source === "bigquery") {
     // Tenant isolation: scope analytics to ONLY this org's connected merchants.
-    const allowedLocationIds = (await getConnectedMerchants(orgId)).map(
-      (m) => m.merchantId
-    );
+    const owned = (await getConnectedMerchants(orgId)).map((m) => m.merchantId);
+    // DEV-ONLY toggle: include extra seed/demo location IDs for testing the
+    // multi-location warehouse data. MUST be unset in production (otherwise the
+    // listed locations would be visible to every org). Isolation logic is
+    // unchanged — this just widens the allowed list.
+    const demo = (process.env.DEMO_LOCATION_IDS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const allowedLocationIds = Array.from(new Set([...owned, ...demo]));
     if (allowedLocationIds.length === 0) {
       return { ok: false, error: "not_connected" };
     }

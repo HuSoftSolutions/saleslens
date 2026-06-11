@@ -13,12 +13,11 @@ export const maxDuration = 300;
  * clients are included automatically with no per-client configuration.
  */
 export async function GET(request: NextRequest) {
+  // Fail closed: a missing CRON_SECRET must never leave this endpoint open —
+  // it triggers a 300s all-org sync and is otherwise publicly reachable.
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const summary = await runNightlySync({ budgetMs: 270_000 });

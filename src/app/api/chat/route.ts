@@ -425,6 +425,10 @@ export async function POST(request: NextRequest) {
               result = { error: "Unknown tool" };
           }
         } catch (err) {
+          console.error(
+            `[chat] tool "${toolCall.function.name}" failed (org=${org.orgId}, source=${source}, args=${JSON.stringify(args)}):`,
+            err
+          );
           result = {
             error: `Tool execution failed: ${err instanceof Error ? err.message : "unknown error"}`,
           };

@@ -53,7 +53,8 @@ export async function GET() {
         : null,
       topLocation,
     });
-  } catch {
+  } catch (err) {
+    console.error(`[overview] metrics failed (org=${org.orgId}, source=${source}):`, err);
     return NextResponse.json({ connected: true, error: "metrics_failed" });
   }
 }
